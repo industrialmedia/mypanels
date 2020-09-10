@@ -1,0 +1,3 @@
+administer mypanels:
+  title: 'Administer mypanels'
+  restrict access: TRUE

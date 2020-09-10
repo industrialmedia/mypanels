@@ -1,0 +1,121 @@
+<?php
+
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\TempStore\SharedTempStoreFactory;
+use Drupal\panels\Plugin\DisplayVariant\PanelsDisplayVariant;
+use Drupal\Core\Render\Element;
+use Drupal\Component\Utility\Html;
+
+
+/**
+ * Implements hook_panels_build_alter().
+ */
+function mypanels_panels_build_alter(array &$build, PanelsDisplayVariant $panels_display) {
+  // Удаляем врапы регионов для панелей
+  foreach (Element::children($build) as $region_name) {
+    if (!empty($build[$region_name]['#prefix'])) {
+      unset($build[$region_name]['#prefix']);
+      unset($build[$region_name]['#suffix']);
+    }
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function mypanels_form_panels_edit_block_form_alter(&$form, \Drupal\Core\Form\FormStateInterface $form_state, $form_id) {
+  $tempstore_id = 'page_manager.page';
+  $form_state->set('tempstore_id', $tempstore_id);
+  $block_id = $form_state->get('block_id');
+  $machine_name = $form_state->get('machine_name');
+  $tempstore = \Drupal::service('tempstore.shared');
+  $cached_values = mypanels_getCachedValues($tempstore, $tempstore_id, $machine_name);
+  /** @var \Drupal\panels\Plugin\DisplayVariant\PanelsDisplayVariant $page_variant_plugin */
+  $page_variant_plugin = $cached_values['plugin'];
+  $block = $page_variant_plugin->getBlock($block_id);
+  $block_configuration = $block->getConfiguration();
+  $form['settings']['mypanels_suggestions'] = [
+    '#type' => 'textfield',
+    '#title' => t('Template suggestions'),
+    '#description' => t('Template suggestions for this block content. i.e. block__test. Separate multiple suggestions by spaces.'),
+    '#default_value' => isset($block_configuration['mypanels_suggestions']) ? $block_configuration['mypanels_suggestions'] : NULL,
+  ];
+  $form['#submit'][] = 'mypanels_panels_edit_block_form_submit';
+}
+
+/**
+ * Submit callback.
+ */
+function mypanels_panels_edit_block_form_submit($form, FormStateInterface $form_state) {
+  $block_id = $form_state->get('block_id');
+  $machine_name = $form_state->get('machine_name');
+  $tempstore_id = $form_state->get('tempstore_id');
+  $tempstore = \Drupal::service('tempstore.shared');
+  $cached_values = mypanels_getCachedValues($tempstore, $tempstore_id, $machine_name);
+  /** @var \Drupal\panels\Plugin\DisplayVariant\PanelsDisplayVariant $page_variant_plugin */
+  $page_variant_plugin = $cached_values['plugin'];
+  $block = $page_variant_plugin->getBlock($block_id);
+  //
+  $block->setConfigurationValue('mypanels_suggestions', $form_state->getValue('settings')['mypanels_suggestions']);
+  $block_configuration = $block->getConfiguration();
+  $page_variant_plugin->updateBlock($block_configuration['uuid'], $block_configuration);
+  // Обновляем $tempstore
+  $cached_values['plugin'] = $page_variant_plugin;
+  if (isset($cached_values['page_variant'])) {
+    $cached_values['page_variant']->getVariantPlugin()->setConfiguration($cached_values['plugin']->getConfiguration());
+  }
+  $tempstore->get($tempstore_id)->set($cached_values['id'], $cached_values);
+}
+
+/* Копия функции getCachedValues из модуля panels */
+function mypanels_getCachedValues(SharedTempStoreFactory $tempstore, $tempstore_id, $machine_name) {
+  $machine_name = explode('--', $machine_name);
+  $cached_values = $tempstore->get($tempstore_id)->get($machine_name[0]);
+  // PageManager specific handling. If $machine_name[1] is set, it's the
+  // page variant ID.
+  if (isset($machine_name[1]) && !isset($cached_values['page_variant'])) {
+    /** @var \Drupal\page_manager\PageInterface $page */
+    $page = $cached_values['page'];
+    $cached_values['page_variant'] = $page->getVariant($machine_name[1]);
+  }
+  if (!isset($cached_values['plugin']) && !empty($cached_values['page_variant'])) {
+    $cached_values['plugin'] = $cached_values['page_variant']->getVariantPlugin();
+  }
+  return $cached_values;
+}
+
+
+/**
+ * Implements hook_preprocess_HOOK().
+ */
+function mypanels_preprocess_block(&$variables) {
+  if (!empty($variables['elements']['#configuration']['mypanels_suggestions'])) {
+    $suggestions_array = explode(' ', $variables['elements']['#configuration']['mypanels_suggestions']);
+    $suggestions_array = array_map('trim', $suggestions_array);
+    foreach ($suggestions_array as $suggestion) {
+      $variables['attributes']['class'][] = 'block--' . Html::cleanCssIdentifier($suggestion);
+    }
+  }
+}
+
+
+/**
+ * Implements hook_theme_suggestions_block_alter().
+ */
+function mypanels_theme_suggestions_block_alter(array &$suggestions, array $variables) {
+  if (!empty($variables['elements']['#configuration']['mypanels_suggestions'])) {
+    $suggestions_array = explode(' ', $variables['elements']['#configuration']['mypanels_suggestions']);
+    $suggestions_array = array_map('trim', $suggestions_array);
+    foreach ($suggestions_array as $suggestion) {
+      $suggestion = preg_replace('/[^0-9a-z]/i', '_', $suggestion);
+      $suggestion = preg_replace('/_{2,}/', '_', $suggestion);
+      $suggestions[] = 'block__' . $suggestion;
+    }
+  }
+}
+
+
+
+
+
+
